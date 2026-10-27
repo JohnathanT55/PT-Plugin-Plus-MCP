@@ -29,6 +29,7 @@
 
 - [ ] 评估 Native Messaging 作为正式桥接方式。
 - [x] 经过随机令牌认证的 localhost HTTP bridge 已作为第一阶段开发桥接方式实现。
+- [x] capability session 的 open/poll/request/response/close 通道已实现，并限制为已注册能力。
 - [ ] 明确扩展无法自行提供标准 stdio MCP 服务。
 - [x] 外部桥接关闭或不可用时，不影响 PTPP 正常启动。
 - [ ] 不依赖 Codex 的 CDP 或 computer-use 插件。

@@ -10,10 +10,22 @@
 
 - `src/protocol.ts` 定义 PTPP-MCP v1 握手、能力声明、AI 请求结构和二次脱敏；
 - `src/bridge.ts` 提供仅监听 `127.0.0.1` 的 HTTP bridge、Bearer token 鉴权、请求大小限制、超时和错误脱敏；
+- bridge 已提供 capability session：PTPP 注册能力后，MCP 可以排队请求，扩展通过长轮询取走并回传结果；
 - `src/ai.ts` 负责 OpenAI-compatible Chat Completions 请求、模型配置、API Key 和响应解析；
 - PTPP 通过 bridge 转发 AI 请求，扩展本身不再保存 LLM endpoint、模型或 API Key。
 
 当前 bridge 是 PTPP 的受控本机连接层，不是浏览器调试端点，也尚未注册搜索、签到、用户数据、下载器和备份等业务工具。下一阶段会在此协议上增加 capability registry 和标准 MCP 工具调用。
+
+### Capability session（当前第一阶段）
+
+扩展使用同一个 Bearer token 调用：
+
+- `POST /v1/session/open`：提交扩展身份和 capability descriptors；
+- `POST /v1/session/:id/poll`：长轮询待处理的工具请求；
+- `POST /v1/session/:id/response`：回传工具结果或脱敏错误；
+- `POST /v1/session/:id/close`：关闭会话。
+
+MCP 侧通过 `POST /v1/session/:id/request` 排队请求。bridge 只允许请求已注册的 capability；需要确认的写操作在缺少 confirmation token 时会被拒绝。会话、队列、请求体和响应都有上限，具体站点数据字段由扩展端 capability handler 决定。
 
 ## 目标
 
