@@ -64,5 +64,3 @@ pnpm start -- --stdio
 - `PTPP_MCP_AI_TIMEOUT_MS`
 - `PTPP_MCP_BRIDGE_TOKEN`
 - `PTPP_MCP_BRIDGE_PORT`
-
-不要把 API Key、bridge token 或真实站点数据提交到仓库。
