@@ -2,6 +2,54 @@ import { z } from "zod";
 
 export const PTPP_MCP_PROTOCOL_VERSION = 1;
 
+/** A capability is an explicit, schema-described bridge operation. */
+export const capabilityKindSchema = z.enum(["query", "action"]);
+export const capabilitySensitivitySchema = z.enum(["public", "account", "private"]);
+export const capabilityConfirmationSchema = z.enum(["none", "required"]);
+
+export const capabilityDescriptorSchema = z.object({
+  id: z.string().regex(/^[a-z][a-z0-9_.-]{2,80}$/),
+  version: z.number().int().min(1).max(100),
+  kind: capabilityKindSchema,
+  description: z.string().max(240),
+  sensitivity: capabilitySensitivitySchema,
+  confirmation: capabilityConfirmationSchema,
+  inputSchema: z.record(z.string(), z.unknown()).default({}),
+  outputSchema: z.record(z.string(), z.unknown()).default({}),
+  maxResultBytes: z.number().int().min(256).max(256 * 1024).default(32 * 1024),
+});
+export type CapabilityDescriptor = z.infer<typeof capabilityDescriptorSchema>;
+
+export const sessionOpenRequestSchema = z.object({
+  protocol: z.literal(PTPP_MCP_PROTOCOL_VERSION),
+  extensionId: z.string().min(1).max(200),
+  extensionVersion: z.string().min(1).max(80),
+  browser: z.string().min(1).max(80),
+  capabilities: z.array(capabilityDescriptorSchema).max(200),
+});
+export type SessionOpenRequest = z.infer<typeof sessionOpenRequestSchema>;
+
+export const toolCallRequestSchema = z.object({
+  requestId: z.string().regex(/^[A-Za-z0-9_-]{8,100}$/),
+  capability: z.string().regex(/^[a-z][a-z0-9_.-]{2,80}$/),
+  input: z.unknown().default({}),
+  confirmationToken: z.string().max(200).optional(),
+});
+export type ToolCallRequest = z.infer<typeof toolCallRequestSchema>;
+
+export const toolCallResponseSchema = z.object({
+  requestId: z.string().regex(/^[A-Za-z0-9_-]{8,100}$/),
+  ok: z.boolean(),
+  result: z.unknown().optional(),
+  error: z
+    .object({
+      code: z.string().max(80),
+      message: z.string().max(500),
+    })
+    .optional(),
+});
+export type ToolCallResponse = z.infer<typeof toolCallResponseSchema>;
+
 export const aiAssistModeSchema = z.enum(["assist", "test", "search-draft", "result-advice", "site-summary"]);
 export type AiAssistMode = z.infer<typeof aiAssistModeSchema>;
 
@@ -62,7 +110,7 @@ export const bridgeHandshakeResponse: BridgeHandshakeResponse = {
   protocol: PTPP_MCP_PROTOCOL_VERSION,
   serverVersion: "0.1.0",
   status: "ready",
-  capabilities: ["assistant.chat", "assistant.test"],
+  capabilities: ["assistant.chat", "assistant.test", "capability.sessions"],
 };
 
 export function clampAiHistory(history: AiAssistRequest["history"]): NonNullable<AiAssistRequest["history"]> {
