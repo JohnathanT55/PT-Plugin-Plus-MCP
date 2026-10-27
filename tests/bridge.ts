@@ -88,6 +88,30 @@ try {
   assert.equal(actionWithoutConfirmation.ok, false);
   assert.equal(actionWithoutConfirmation.error?.code, "confirmation_required");
 
+  const oversizedRequest = fetch(`http://${bridge.host}:${bridge.port}/v1/session/${openPayload.sessionId}/request`, {
+    method: "POST",
+    headers: { Authorization: "Bearer test-token", "Content-Type": "application/json" },
+    body: JSON.stringify({
+      requestId: "request-large123",
+      capability: "site.user_summary",
+      input: {},
+    }),
+  });
+  const oversizedPoll = await fetch(`http://${bridge.host}:${bridge.port}/v1/session/${openPayload.sessionId}/poll`, {
+    method: "POST",
+    headers: { Authorization: "Bearer test-token", "Content-Type": "application/json" },
+    body: JSON.stringify({ timeoutMs: 1_000 }),
+  });
+  assert.equal(oversizedPoll.status, 200);
+  const oversizedResponse = await fetch(`http://${bridge.host}:${bridge.port}/v1/session/${openPayload.sessionId}/response`, {
+    method: "POST",
+    headers: { Authorization: "Bearer test-token", "Content-Type": "application/json" },
+    body: JSON.stringify({ requestId: "request-large123", ok: true, result: { tooLarge: "x".repeat(20_000) } }),
+  });
+  assert.equal(oversizedResponse.status, 413);
+  const oversizedResult = await (await oversizedRequest).json();
+  assert.equal(oversizedResult.error?.code, "result_too_large");
+
   const unknownCapability = await fetch(`http://${bridge.host}:${bridge.port}/v1/session/${openPayload.sessionId}/request`, {
     method: "POST",
     headers: { Authorization: "Bearer test-token", "Content-Type": "application/json" },

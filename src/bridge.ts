@@ -50,7 +50,10 @@ interface Session {
   queue: ToolCallRequest[];
   pollWaiter?: (request: ToolCallRequest | null) => void;
   pollTimer?: ReturnType<typeof setTimeout>;
-  pending: Map<string, { resolve: (response: ToolCallResponse) => void; timer: ReturnType<typeof setTimeout> }>;
+  pending: Map<
+    string,
+    { resolve: (response: ToolCallResponse) => void; timer: ReturnType<typeof setTimeout>; maxResultBytes: number }
+  >;
 }
 
 function sendJson(response: ServerResponse, status: number, body: unknown): void {
@@ -81,6 +84,14 @@ function authorized(request: IncomingMessage, token: string): boolean {
 
 function createId(bytes = 18): string {
   return randomBytes(bytes).toString("base64url");
+}
+
+function jsonByteLength(value: unknown): number {
+  try {
+    return Buffer.byteLength(JSON.stringify(value) ?? "null", "utf8");
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
 }
 
 function parseSessionPath(requestUrl: string | undefined): { sessionId: string; action: "poll" | "request" | "response" | "close" } | undefined {
@@ -176,7 +187,7 @@ export async function startBridge(config: BridgeConfig = {}): Promise<RunningBri
         session.pending.delete(request.requestId);
         resolve({ requestId: request.requestId, ok: false, error: { code: "timeout", message: "PTPP did not respond in time" } });
       }, TOOL_CALL_TIMEOUT_MS);
-      session.pending.set(request.requestId, { resolve, timer });
+      session.pending.set(request.requestId, { resolve, timer, maxResultBytes: descriptor.maxResultBytes });
       session.queue.push(request);
       deliverQueuedRequest(session);
     });
@@ -247,6 +258,14 @@ export async function startBridge(config: BridgeConfig = {}): Promise<RunningBri
           if (!pending) return sendJson(response, 404, { ok: false, error: "Tool request not found or already timed out" });
           clearTimeout(pending.timer);
           session.pending.delete(result.requestId);
+          if (result.ok && jsonByteLength(result.result) > pending.maxResultBytes) {
+            pending.resolve({
+              requestId: result.requestId,
+              ok: false,
+              error: { code: "result_too_large", message: "Capability result exceeded its declared size limit" },
+            });
+            return sendJson(response, 413, { ok: false, error: "Capability result exceeded its declared size limit" });
+          }
           pending.resolve(result);
           session.expiresAt = Date.now() + SESSION_TTL_MS;
           return sendJson(response, 200, { ok: true });
