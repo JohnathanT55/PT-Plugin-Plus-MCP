@@ -36,7 +36,6 @@
 - [x] 标准 MCP stdio 适配器提供 session discovery、capability discovery 和受控通用调用。
 - [x] 多个 PTPP profile 同时连接时要求显式 `sessionId`，不会跨 profile 广播调用。
 - [x] MCP tool 请求复用 bridge capability session，不直接访问浏览器、DOM、CDP 或 computer-use。
-- [ ] 不依赖 Codex 的 CDP 或 computer-use 插件。
 
 ## 安全和隐私
 
@@ -46,9 +45,3 @@
 - [x] MCP adapter 不为确认级操作伪造确认令牌；此类操作要求 PTPP 拥有者确认流程。
 - [ ] 删除、恢复、批量下载等操作强制二次确认。
 - [ ] 站点搜索和签到设置限流，并保留 `needs_manual` 状态。
-
-## 暂不实现
-
-- [ ] Chrome 调试端点自动化测试驱动。
-- [ ] 对 Codex Chrome Extension CDP 或 computer-use 的封装。
-- [ ] 自动启动独立浏览器 profile。

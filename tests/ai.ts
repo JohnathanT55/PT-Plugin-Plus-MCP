@@ -40,6 +40,30 @@ const toolResponse = await requestAiAssistant({ mode: "assist", prompt: "分析 
 assert.equal(toolResponse.text, "下一等级还差 2");
 assert.equal(calls, 1);
 assert.equal(JSON.stringify(capturedMessages).includes('"role":"tool"'), true);
+
+let continuationCalls = 0;
+globalThis.fetch = async (_input, init) => {
+  continuationCalls++;
+  const body = JSON.parse(String(init?.body));
+  assert.equal(body.max_tokens, 2_400, "AI requests use the expanded bounded output budget");
+  if (continuationCalls === 1) {
+    return new Response(
+      JSON.stringify({ choices: [{ finish_reason: "length", message: { content: "1. audiences\n2. azusa" } }], model: "local" }),
+      { status: 200 },
+    );
+  }
+  assert.equal(body.messages.at(-1)?.role, "user", "continuation adds a user instruction after the partial answer");
+  return new Response(
+    JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: "\n3. hdsky" } }], model: "local" }),
+    { status: 200 },
+  );
+};
+const continuedResponse = await requestAiAssistant(
+  { mode: "assist", prompt: "列出全部站点" },
+  { endpoint: "https://example.test/v1", model: "model", apiKey: "secret", timeoutMs: 1_000 },
+);
+assert.equal(continuedResponse.text, "1. audiences\n2. azusa\n3. hdsky", "a length-limited answer is continued exactly once");
+assert.equal(continuationCalls, 2, "continuation is bounded to one extra request");
 globalThis.fetch = originalFetch;
 
 console.log("MCP AI protocol tests passed");

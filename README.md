@@ -1,66 +1,122 @@
 # PT-Plugin-Plus MCP
 
-这是 PTPP 的独立 MCP 服务仓库。目标是让 PTPP 的业务能力、界面动作和内置 AI 共用一套可发现、可授权、可审计的工具协议。
+PT-Plugin-Plus MCP 是 PT-Plugin-Plus（PTPP）的可选本机助手服务。
 
-此前用于连接浏览器调试端点的测试驱动实现已经移除。MCP 不会调用或封装 Codex 的 Chrome Extension CDP、computer-use，也不把浏览器自动化作为最终连接方案。
+它负责两件事：
 
-## 当前状态
+- 让 PTPP 的 AI 助手使用 OpenAI-compatible API；
+- 让经过授权的 MCP 客户端查询 PTPP 已公开的业务能力。
 
-第一阶段（PTPP↔MCP 协议、可选 bridge、AI 请求迁移）已经完成：
+PTPP 本身仍然是浏览器扩展。MCP 服务不读取浏览器配置文件、不操作 Chrome 调试端口，也不会代替 PTPP 保存站点 Cookie、下载器密码或备份凭据。关闭这个服务后，PTPP 仍可作为普通扩展使用。
 
-- `src/protocol.ts` 定义 PTPP-MCP v1 握手、能力声明、AI 请求结构和二次脱敏；
-- `src/bridge.ts` 提供仅监听 `127.0.0.1` 的 HTTP bridge、Bearer token 鉴权、请求大小限制、超时和错误脱敏；
-- bridge 已提供 capability session：PTPP 注册能力后，MCP 可以排队请求，扩展通过长轮询取走并回传结果；
-- `src/ai.ts` 负责 OpenAI-compatible Chat Completions 请求、模型配置、API Key 和响应解析；
-- PTPP 通过 bridge 转发 AI 请求，扩展本身不再保存 LLM endpoint、模型或 API Key。
+## 适合谁
 
-当前 bridge 是 PTPP 的受控本机连接层，不是浏览器调试端点。标准 stdio MCP 适配器已经提供 `ptpp_sessions`、`ptpp_capabilities` 和 `ptpp_call`，并把调用路由到选定的 PTPP capability session。业务能力由扩展动态声明；扩展未注册的能力不会被执行。PTPP 业务工具按阶段接入，直连外部 MCP 时也必须先发现 capability。
+如果你只使用 PTPP 的搜索、下载和站点工具栏，不需要安装本项目。
 
-### Capability session（当前第一阶段）
+如果你希望在 PTPP 中使用 AI 助手，或者希望让兼容 MCP 的桌面客户端查询 PTPP 数据，再安装本服务即可。
 
-扩展使用同一个 Bearer token 调用：
+## 快速开始（Windows）
 
-- `POST /v1/session/open`：提交扩展身份和 capability descriptors；
-- `POST /v1/session/:id/poll`：长轮询待处理的工具请求；
-- `POST /v1/session/:id/response`：回传工具结果或脱敏错误；
-- `POST /v1/session/:id/close`：关闭会话。
+### 1. 准备环境
 
-MCP 侧通过 `POST /v1/session/:id/request` 排队请求。bridge 只允许请求已注册的 capability；需要确认的写操作在缺少 confirmation token 时会被拒绝。会话、队列、请求体和响应都有上限，具体站点数据字段由扩展端 capability handler 决定。
-
-## 目标
-
-- 在 PTPP 内部建立能力注册表和工具协议；
-- 让按钮、表单输入和 AI 工具调用复用同一批业务命令；
-- MCP 关闭时，PTPP 保持现有启动和功能不变；
-- MCP 启用时，由明确授权的连接层访问这些工具；
-- 任何写操作都具备权限分级、确认、脱敏和审计。
-
-## Chrome 扩展限制
-
-MV3 扩展不能像普通 Node 进程一样监听 stdio 或绑定本地 TCP 端口。因此，“单独一个扩展、零外部桥接、任意 MCP 客户端直接连接”不是标准 MCP 的可行部署方式。
-
-可行方向是：
-
-1. PTPP 内置 MCP-compatible tool runtime，供内置 AI 直接调用；
-2. 需要外部 MCP 客户端时，增加可选 Native Messaging 或经过认证的本地桥接；
-3. 桥接关闭或不可用时，PTPP 完全按普通插件运行。
-
-当前仓库不包含浏览器自动化；主插件桥接已经实现，业务工具仍按清单分阶段接入。
-
-## 开发与验证
+安装 Node.js 22 或更高版本，并确认 PowerShell 中可以运行：
 
 ```powershell
-pnpm typecheck
-pnpm test
-$env:PTPP_MCP_BRIDGE_TOKEN = "use-a-random-local-secret"
-pnpm start -- --stdio
+node --version
 ```
 
-服务默认监听 `http://127.0.0.1:19799`。必须通过环境变量显式提供本机 bridge token；服务不会把 token 写入日志。使用 `--stdio` 启动标准 MCP stdio 适配器；若 bridge 已由其他进程启动，可使用 `--connect --stdio` 仅连接现有 bridge。LLM 配置只通过环境变量提供：
+然后在本仓库目录执行：
 
-- `PTPP_MCP_AI_ENDPOINT`
-- `PTPP_MCP_AI_MODEL`
-- `PTPP_MCP_AI_API_KEY`
-- `PTPP_MCP_AI_TIMEOUT_MS`
-- `PTPP_MCP_BRIDGE_TOKEN`
-- `PTPP_MCP_BRIDGE_PORT`
+```powershell
+pnpm install
+Copy-Item .env.example .env
+```
+
+### 2. 编辑 `.env`
+
+打开 `.env`，至少填写以下项目：
+
+```text
+PTPP_MCP_BRIDGE_TOKEN=请替换为随机长字符串
+PTPP_MCP_AI_ENDPOINT=https://你的模型服务/v1
+PTPP_MCP_AI_MODEL=你的模型名称
+PTPP_MCP_AI_API_KEY=你的模型服务密钥
+```
+
+`PTPP_MCP_BRIDGE_TOKEN` 是 PTPP 与本服务之间的本地连接令牌，不是模型服务的 API Key。端口默认使用 `19799`；如果你修改了 `PTPP_MCP_BRIDGE_PORT`，稍后也要在 PTPP 的 AI 助手设置中填写相同端口。
+
+不要把 `.env` 发给别人，也不要提交到 Git。仓库已经将它加入忽略列表。
+
+### 3. 启动服务
+
+推荐使用后台启动脚本：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-bridge.ps1
+```
+
+脚本会在后台启动服务，日志保存在本地 `logs/` 目录。需要在当前窗口查看输出时，也可以运行：
+
+```powershell
+pnpm start
+```
+
+### 4. 在 PTPP 中连接
+
+1. 打开 PTPP 的“常规设置 → AI 助手”。
+2. 打开 MCP AI 助手开关。
+3. 填写本机地址，例如 `http://127.0.0.1:19799`。
+4. 填入与 `.env` 完全相同的 bridge token。
+5. 点击“测试连接”，看到“已连接”后保存。
+
+连接成功后，PTPP 页面右下角会出现 AI 助手入口。没有连接成功时，入口会自动隐藏；这不会影响 PTPP 的其他功能。
+
+## 能做什么
+
+AI 助手可以在 PTPP 已开放的范围内：
+
+- 查看站点列表和用户数据摘要；
+- 分析等级要求和当前差额；
+- 查看下载器状态；
+- 发起搜索并读取分页结果；
+- 查看签到状态，或执行明确请求的单站签到；
+- 查看备份服务和历史摘要；
+- 根据当前页面给出搜索、筛选或数据分析建议。
+
+删除备份、恢复备份和实际推送下载不会交给 AI 自动执行。所有业务能力都由 PTPP 显式注册，未注册的能力不会被调用。
+
+## 安全说明
+
+- 服务只监听本机回环地址，不接受局域网或公网连接。
+- 模型 API Key 只保存在 MCP 服务的 `.env` 中，不进入 PTPP 配置、备份或 Chrome Sync。
+- PTPP 和 MCP 都会过滤 Cookie、密码、认证头、下载器凭据和完整下载链接。
+- 页面上下文和对话只按当前请求发送给 MCP；上游模型是否保存请求由模型服务自己的隐私政策决定。
+- 请为 bridge token 使用随机值，并不要把日志、`.env` 或真实备份上传到公共位置。
+
+## 常见问题
+
+### PTPP 显示“连接失败”
+
+确认后台服务仍在运行，并检查 PTPP 中的地址、端口和 token 是否与 `.env` 完全一致。修改 `.env` 后需要重新启动服务。
+
+### 服务启动后马上退出
+
+在当前窗口运行 `pnpm start` 查看错误。最常见原因是没有填写 `PTPP_MCP_BRIDGE_TOKEN`，或模型 endpoint、模型名称和 API Key 不完整。
+
+### AI 没有回答或回答超时
+
+先用模型服务自己的接口确认 endpoint 和 API Key 有效，再检查模型名称是否正确。长回答可能需要更长的模型服务超时时间；默认限制会避免服务无限等待。
+
+### 如何停止后台服务
+
+结束对应的 Node 进程即可。日志文件只用于本机排查，删除日志不会影响 PTPP 数据。
+
+## 项目关系
+
+本项目是 PTPP 的独立可选组件，不是浏览器插件。PTPP 项目主页：<https://github.com/JohnathanT55/PT-Plugin-Plus>。
+
+更多说明见 [`docs/PRODUCT_OVERVIEW.md`](./docs/PRODUCT_OVERVIEW.md) 和 [`docs/wiki/`](./docs/wiki/)。`docs/wiki/` 是仓库内的 Wiki source；如需使用 GitHub Wiki，可将其中各 Markdown 文件复制为对应的 Wiki 页面。需要 stdio 的高级接入方式请参阅 [`docs/wiki/CONFIGURATION.md`](./docs/wiki/CONFIGURATION.md)。
+
+## License
+
+[MIT](./LICENSE)

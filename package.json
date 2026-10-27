@@ -7,7 +7,8 @@
   "license": "MIT",
   "engines": { "node": ">=22" },
   "scripts": {
-    "start": "tsx src/main.ts",
+    "start": "node --env-file-if-exists=.env ./node_modules/tsx/dist/cli.mjs src/main.ts",
+    "start:detached": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-bridge.ps1",
     "typecheck": "tsc --noEmit",
     "test": "tsx tests/ai.ts && tsx tests/bridge.ts && tsx tests/mcp.ts"
   },
