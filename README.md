@@ -115,7 +115,7 @@ AI 助手可以在 PTPP 已开放的范围内：
 
 本项目是 PTPP 的独立可选组件，不是浏览器插件。PTPP 项目主页：<https://github.com/JohnathanT55/PT-Plugin-Plus>。
 
-更多说明见 [`docs/PRODUCT_OVERVIEW.md`](./docs/PRODUCT_OVERVIEW.md) 和 [`docs/wiki/`](./docs/wiki/)。`docs/wiki/` 是仓库内的 Wiki source；如需使用 GitHub Wiki，可将其中各 Markdown 文件复制为对应的 Wiki 页面。需要 stdio 的高级接入方式请参阅 [`docs/wiki/CONFIGURATION.md`](./docs/wiki/CONFIGURATION.md)。
+更多说明见 [`docs/PRODUCT_OVERVIEW.md`](./docs/PRODUCT_OVERVIEW.md) 和 [GitHub Wiki](https://github.com/JohnathanT55/PT-Plugin-Plus-MCP/wiki)。需要 stdio 的高级接入方式请参阅 [配置模型与令牌](https://github.com/JohnathanT55/PT-Plugin-Plus-MCP/wiki/CONFIGURATION)。
 
 ## License
 
