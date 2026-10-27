@@ -2,6 +2,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { randomBytes } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { requestAiAssistant } from "./ai.js";
+import type { SessionSummary } from "./mcp.js";
+import { createAssistantTools } from "./assistantTools.js";
 import {
   aiAssistRequestSchema,
   bridgeHandshakeResponse,
@@ -31,6 +33,7 @@ export interface RunningBridge {
   host: string;
   port: number;
   token: string;
+  listSessions(): SessionSummary[];
   enqueueToolRequest(sessionId: string, request: Omit<ToolCallRequest, "requestId"> & { requestId?: string }): Promise<ToolCallResponse>;
   close(): Promise<void>;
 }
@@ -143,6 +146,7 @@ function pollSession(session: Session, timeoutMs: number): Promise<ToolCallReque
 
 export async function startBridge(config: BridgeConfig = {}): Promise<RunningBridge> {
   const host = config.host ?? "127.0.0.1";
+  if (!["127.0.0.1", "::1"].includes(host)) throw new Error("PTPP MCP bridge only listens on loopback");
   const port = config.port ?? Number(process.env.PTPP_MCP_BRIDGE_PORT ?? 19799);
   const token = config.token ?? process.env.PTPP_MCP_BRIDGE_TOKEN ?? randomBytes(24).toString("base64url");
   const aiEndpoint = config.aiEndpoint ?? process.env.PTPP_MCP_AI_ENDPOINT ?? "";
@@ -168,14 +172,15 @@ export async function startBridge(config: BridgeConfig = {}): Promise<RunningBri
     const request = toolCallRequestSchema.parse({ ...input, requestId: input.requestId ?? createId() });
     const descriptor = session.capabilities.get(request.capability);
     if (!descriptor) throw new Error(`Capability is not registered: ${request.capability}`);
-    if (descriptor.kind === "action" && descriptor.confirmation === "required" && !request.confirmationToken) {
+    if (descriptor.confirmation === "required") {
       return Promise.resolve({
         requestId: request.requestId,
         ok: false,
         error: { code: "confirmation_required", message: "This capability requires explicit confirmation" },
       });
     }
-    if (session.queue.length >= MAX_SESSION_QUEUE) {
+    if (session.pending.has(request.requestId)) throw new Error("Duplicate active requestId");
+    if (session.pending.size >= MAX_SESSION_QUEUE) {
       return Promise.resolve({
         requestId: request.requestId,
         ok: false,
@@ -185,6 +190,7 @@ export async function startBridge(config: BridgeConfig = {}): Promise<RunningBri
     return new Promise<ToolCallResponse>((resolve) => {
       const timer = setTimeout(() => {
         session.pending.delete(request.requestId);
+        session.queue = session.queue.filter((item) => item.requestId !== request.requestId);
         resolve({ requestId: request.requestId, ok: false, error: { code: "timeout", message: "PTPP did not respond in time" } });
       }, TOOL_CALL_TIMEOUT_MS);
       session.pending.set(request.requestId, { resolve, timer, maxResultBytes: descriptor.maxResultBytes });
@@ -193,17 +199,33 @@ export async function startBridge(config: BridgeConfig = {}): Promise<RunningBri
     });
   };
 
+  const listSessions = (): SessionSummary[] => {
+    removeExpiredSessions();
+    return [...sessions.values()].map((session) => ({
+      sessionId: session.id,
+      extensionId: session.metadata.extensionId,
+      extensionVersion: session.metadata.extensionVersion,
+      browser: session.metadata.browser,
+      openedAt: session.openedAt,
+      expiresAt: session.expiresAt,
+      capabilities: [...session.capabilities.values()],
+    }));
+  };
+
   const server = createServer(async (request, response) => {
     if (request.method === "OPTIONS") return sendJson(response, 204, {});
     try {
       if (request.url === "/health" && request.method === "GET") return sendJson(response, 200, { ok: true, protocol: PTPP_MCP_PROTOCOL_VERSION, service: "pt-plugin-plus-mcp" });
       if (!authorized(request, token)) return sendJson(response, 401, { ok: false, error: "MCP bridge authorization failed" });
+      if (request.url === "/v1/sessions" && request.method === "GET") return sendJson(response, 200, { ok: true, sessions: listSessions() });
       if (request.url === "/v1/handshake" && request.method === "POST") {
         const body = await readBody(request) as BridgeHandshakeRequest;
         if (body.protocol !== PTPP_MCP_PROTOCOL_VERSION || typeof body.extensionId !== "string") return sendJson(response, 400, { ok: false, error: "Unsupported PTPP MCP protocol" });
         return sendJson(response, 200, bridgeHandshakeResponse);
       }
       if (request.url === "/v1/session/open" && request.method === "POST") {
+        removeExpiredSessions();
+        if (sessions.size >= 16) return sendJson(response, 429, { ok: false, error: "Too many PTPP sessions; close unused sessions first" });
         const body = sessionOpenRequestSchema.parse(await readBody(request));
         const id = createId();
         const now = Date.now();
@@ -232,7 +254,10 @@ export async function startBridge(config: BridgeConfig = {}): Promise<RunningBri
       }
       if (request.url === "/v1/assistant" && request.method === "POST") {
         const body = aiAssistRequestSchema.parse(await readBody(request));
-        const result = await requestAiAssistant(sanitizeAiRequest(body), { endpoint: aiEndpoint, model: aiModel, apiKey: aiApiKey, timeoutMs: aiTimeoutMs });
+        const tools = listSessions().length || body.sessionId
+          ? await createAssistantTools({ listSessions, enqueueToolRequest }, body, body.sessionId)
+          : undefined;
+        const result = await requestAiAssistant(sanitizeAiRequest(body), { endpoint: aiEndpoint, model: aiModel, apiKey: aiApiKey, timeoutMs: aiTimeoutMs }, tools);
         return sendJson(response, 200, { ok: true, ...result });
       }
       const sessionPath = parseSessionPath(request.url);
@@ -248,7 +273,7 @@ export async function startBridge(config: BridgeConfig = {}): Promise<RunningBri
           return sendJson(response, 200, { ok: true, request: toolRequest });
         }
         if (sessionPath.action === "request" && request.method === "POST") {
-          const body = toolCallRequestSchema.parse(await readBody(request));
+          const body = toolCallRequestSchema.parse({ requestId: createId(), ...await readBody(request) as object });
           const result = await enqueueToolRequest(session.id, body);
           return sendJson(response, result.ok ? 200 : 409, result);
         }
@@ -291,6 +316,7 @@ export async function startBridge(config: BridgeConfig = {}): Promise<RunningBri
     host,
     port: actualPort,
     token,
+    listSessions,
     enqueueToolRequest,
     close: async () => {
       for (const session of sessions.values()) closeSession(session);

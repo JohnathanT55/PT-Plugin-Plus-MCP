@@ -14,7 +14,7 @@
 - `src/ai.ts` 负责 OpenAI-compatible Chat Completions 请求、模型配置、API Key 和响应解析；
 - PTPP 通过 bridge 转发 AI 请求，扩展本身不再保存 LLM endpoint、模型或 API Key。
 
-当前 bridge 是 PTPP 的受控本机连接层，不是浏览器调试端点，也尚未注册搜索、签到、用户数据、下载器和备份等业务工具。下一阶段会在此协议上增加 capability registry 和标准 MCP 工具调用。
+当前 bridge 是 PTPP 的受控本机连接层，不是浏览器调试端点。标准 stdio MCP 适配器已经提供 `ptpp_sessions`、`ptpp_capabilities` 和 `ptpp_call`，并把调用路由到选定的 PTPP capability session。业务能力由扩展动态声明；扩展未注册的能力不会被执行。PTPP 业务工具按阶段接入，直连外部 MCP 时也必须先发现 capability。
 
 ### Capability session（当前第一阶段）
 
@@ -52,10 +52,11 @@ MV3 扩展不能像普通 Node 进程一样监听 stdio 或绑定本地 TCP 端�
 ```powershell
 pnpm typecheck
 pnpm test
-pnpm start
+$env:PTPP_MCP_BRIDGE_TOKEN = "use-a-random-local-secret"
+pnpm start -- --stdio
 ```
 
-服务默认监听 `http://127.0.0.1:19799`，启动时会在标准错误输出随机 bridge token。LLM 配置只通过环境变量提供：
+服务默认监听 `http://127.0.0.1:19799`。必须通过环境变量显式提供本机 bridge token；服务不会把 token 写入日志。使用 `--stdio` 启动标准 MCP stdio 适配器；若 bridge 已由其他进程启动，可使用 `--connect --stdio` 仅连接现有 bridge。LLM 配置只通过环境变量提供：
 
 - `PTPP_MCP_AI_ENDPOINT`
 - `PTPP_MCP_AI_MODEL`

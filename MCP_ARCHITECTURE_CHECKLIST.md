@@ -18,11 +18,12 @@
 
 ## 内置 AI
 
-- [ ] 内置 AI 直接使用 PTPP 内部工具层，不依赖外部 MCP 进程。
-- [ ] 支持 OpenAI-compatible tool calling。
-- [ ] 对不支持 tool calling 的模型提供受限 JSON fallback。
-- [ ] 限制每次对话的工具调用轮数。
-- [ ] 搜索、用户数据分析和解释类操作默认允许。
+- [x] 内置 AI 通过当前 bridge session 使用 PTPP 工具，不依赖浏览器调试插件。
+- [x] 支持有限轮次的 OpenAI-compatible tool calling。
+- [x] 对不支持 tool calling 的模型提供只读数据 fallback，不假称搜索已执行。
+- [x] 限制每次对话的工具调用轮数、结果字节数和最大工具数量。
+- [x] 搜索、用户数据分析和解释类操作按用户意图开放；搜索启动仅在用户明确要求时提供。
+- [x] 仅读工具进入 AI allowlist；刷新、签到执行、推送、删除、恢复和配置修改不向 AI 暴露。
 - [ ] 推送、收藏、签到、备份恢复、删除等操作需要确认。
 
 ## 外部 MCP 连接
@@ -32,6 +33,9 @@
 - [x] capability session 的 open/poll/request/response/close 通道已实现，并限制为已注册能力。
 - [ ] 明确扩展无法自行提供标准 stdio MCP 服务。
 - [x] 外部桥接关闭或不可用时，不影响 PTPP 正常启动。
+- [x] 标准 MCP stdio 适配器提供 session discovery、capability discovery 和受控通用调用。
+- [x] 多个 PTPP profile 同时连接时要求显式 `sessionId`，不会跨 profile 广播调用。
+- [x] MCP tool 请求复用 bridge capability session，不直接访问浏览器、DOM、CDP 或 computer-use。
 - [ ] 不依赖 Codex 的 CDP 或 computer-use 插件。
 
 ## 安全和隐私
@@ -39,6 +43,7 @@
 - [x] 默认关闭外部 MCP 桥接。
 - [x] Cookie、密码、API Key、WebDAV 凭据永不进入 AI 请求上下文或工具返回值。
 - [ ] 写操作使用 allowlist、确认令牌和审计日志。
+- [x] MCP adapter 不为确认级操作伪造确认令牌；此类操作要求 PTPP 拥有者确认流程。
 - [ ] 删除、恢复、批量下载等操作强制二次确认。
 - [ ] 站点搜索和签到设置限流，并保留 `needs_manual` 状态。
 

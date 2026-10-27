@@ -64,6 +64,7 @@ const aiContextSchema = z
   .optional();
 
 export const aiAssistRequestSchema = z.object({
+  sessionId: z.string().max(100).optional(),
   mode: aiAssistModeSchema,
   prompt: z.string().max(4_000).optional(),
   history: z
