@@ -78,6 +78,7 @@ export type AiAssistRequest = z.infer<typeof aiAssistRequestSchema>;
 export interface AiAssistResponse {
   text: string;
   model?: string;
+  pendingConfirmations?: Array<Record<string, unknown>>;
 }
 
 export interface BridgeHandshakeRequest {

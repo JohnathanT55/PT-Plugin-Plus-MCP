@@ -8,12 +8,13 @@ const capability = {
   description: "Read site statistics including next-level requirements and unmet values", confirmation: "none" as const,
   inputSchema: { type: "object" }, outputSchema: { type: "object" }, maxResultBytes: 262_144,
 };
-const session: SessionSummary = { sessionId: "session-a", extensionId: "extension-a", extensionVersion: "2.1.0", browser: "chrome", openedAt: Date.now(), expiresAt: Date.now() + 60_000, capabilities: [capability] };
-const calls: Array<{ sessionId: string; capability: string; input: unknown }> = [];
+const confirmationCapability = { ...capability, id: "ptpp.settings.apply_patch", kind: "action" as const, confirmation: "required" as const };
+const session: SessionSummary = { sessionId: "session-a", extensionId: "extension-a", extensionVersion: "2.1.0", browser: "chrome", openedAt: Date.now(), expiresAt: Date.now() + 60_000, capabilities: [capability, confirmationCapability] };
+const calls: Array<{ sessionId: string; capability: string; input: unknown; confirmationToken?: string }> = [];
 const bridge: CapabilityBridge = {
   listSessions: () => [session],
   enqueueToolRequest: async (sessionId, request) => {
-    calls.push({ sessionId, capability: request.capability, input: request.input });
+    calls.push({ sessionId, capability: request.capability, input: request.input, ...(request.confirmationToken ? { confirmationToken: request.confirmationToken } : {}) });
     return { requestId: request.requestId ?? "generated", ok: true, result: { items: [{ siteId: "audiences", nextLevel: { requirements: { uploaded: 5 }, unmet: { uploaded: 2 } } }] } };
   },
 };
@@ -31,6 +32,11 @@ try {
   const data = await client.callTool({ name: "ptpp_call", arguments: { capability: "ptpp.user_data.get", input: { siteIds: ["audiences"], limit: 100 } } });
   assert.equal(String((data as { content?: Array<{ text?: string }> }).content?.[0]?.text).includes('"unmet"'), true);
   assert.deepEqual(calls[0], { sessionId: "session-a", capability: "ptpp.user_data.get", input: { siteIds: ["audiences"], limit: 100 } });
+  const noApproval = await client.callTool({ name: "ptpp_call", arguments: { capability: "ptpp.settings.apply_patch", input: { proposalId: "pending-1" } } });
+  assert.equal(String((noApproval as { content?: Array<{ text?: string }> }).content?.[0]?.text).includes("confirmation_required"), true);
+  assert.equal(calls.length, 1, "adapter does not invent user approval");
+  await client.callTool({ name: "ptpp_call", arguments: { capability: "ptpp.settings.apply_patch", input: { proposalId: "pending-1" }, confirmationToken: "user-approved-one-time-token" } });
+  assert.equal(calls[1].confirmationToken, "user-approved-one-time-token", "PTPP-owned token is passed through for extension-side validation");
   await assert.rejects(() => selectSession({ listSessions: () => [], enqueueToolRequest: bridge.enqueueToolRequest }, undefined), /No PTPP extension/);
   const multi = { listSessions: () => [session, { ...session, sessionId: "session-b" }], enqueueToolRequest: bridge.enqueueToolRequest };
   await assert.rejects(() => selectSession(multi, undefined), /Multiple PTPP sessions/);

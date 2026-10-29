@@ -66,17 +66,19 @@ export function createMcpServer(bridge: CapabilityBridge): McpServer {
       sessionId: z.string().max(100).optional(),
       capability: z.string().regex(/^[a-z][a-z0-9_.-]{2,80}$/),
       input: z.record(z.string(), z.unknown()).default({}),
+      confirmationToken: z.string().max(200).optional(),
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-  }, async ({ sessionId, capability, input }) => {
+  }, async ({ sessionId, capability, input, confirmationToken }) => {
     try {
       const session = await selectSession(bridge, sessionId);
       const descriptor = session.capabilities.find((item) => item.id === capability);
       if (!descriptor) return result({ ok: false, error: { code: "unsupported_capability", message: "Capability is not registered by the selected extension" } }, true);
-      // An LLM cannot mint user approval. No confirmation-required action is
-      // exposed until a real extension-owned confirmation flow exists.
-      if (descriptor.confirmation === "required") return result({ ok: false, error: { code: "confirmation_required", message: "Confirm this operation in PTPP; this adapter cannot manufacture approval" } }, true);
-      const response = await bridge.enqueueToolRequest(session.sessionId, { capability, input });
+      // Confirmation is owned by PTPP. The adapter never creates or guesses a
+      // token; it forwards the user-provided one to the extension, which must
+      // validate it against the exact pending proposal.
+      if (descriptor.confirmation === "required" && !confirmationToken) return result({ ok: false, error: { code: "confirmation_required", message: "Confirm this operation in PTPP and provide its one-time token" } }, true);
+      const response = await bridge.enqueueToolRequest(session.sessionId, { capability, input, confirmationToken });
       return result({ ...response, sessionId: session.sessionId }, !response.ok);
     } catch (error) { return failure(error); }
   });

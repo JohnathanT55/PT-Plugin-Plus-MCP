@@ -88,6 +88,25 @@ try {
   assert.equal(actionWithoutConfirmation.ok, false);
   assert.equal(actionWithoutConfirmation.error?.code, "confirmation_required");
 
+  const confirmedRequest = bridge.enqueueToolRequest(openPayload.sessionId, {
+    requestId: "request-confirmed1",
+    capability: "site.sign_in",
+    input: { siteId: "audiences" },
+    confirmationToken: "extension-issued-token",
+  });
+  const confirmedPoll = await fetch(`http://${bridge.host}:${bridge.port}/v1/session/${openPayload.sessionId}/poll`, {
+    method: "POST",
+    headers: { Authorization: "Bearer test-token", "Content-Type": "application/json" },
+    body: JSON.stringify({ timeoutMs: 1_000 }),
+  });
+  assert.equal((await confirmedPoll.json()).request.confirmationToken, "extension-issued-token", "extension receives the token to validate");
+  await fetch(`http://${bridge.host}:${bridge.port}/v1/session/${openPayload.sessionId}/response`, {
+    method: "POST",
+    headers: { Authorization: "Bearer test-token", "Content-Type": "application/json" },
+    body: JSON.stringify({ requestId: "request-confirmed1", ok: false, error: { code: "invalid_confirmation", message: "Approval was not granted" } }),
+  });
+  assert.equal((await confirmedRequest).error?.code, "invalid_confirmation", "bridge does not bypass extension-owned validation");
+
   const oversizedRequest = fetch(`http://${bridge.host}:${bridge.port}/v1/session/${openPayload.sessionId}/request`, {
     method: "POST",
     headers: { Authorization: "Bearer test-token", "Content-Type": "application/json" },

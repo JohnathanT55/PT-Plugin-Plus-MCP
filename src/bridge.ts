@@ -172,7 +172,7 @@ export async function startBridge(config: BridgeConfig = {}): Promise<RunningBri
     const request = toolCallRequestSchema.parse({ ...input, requestId: input.requestId ?? createId() });
     const descriptor = session.capabilities.get(request.capability);
     if (!descriptor) throw new Error(`Capability is not registered: ${request.capability}`);
-    if (descriptor.confirmation === "required") {
+    if (descriptor.confirmation === "required" && !request.confirmationToken) {
       return Promise.resolve({
         requestId: request.requestId,
         ok: false,
