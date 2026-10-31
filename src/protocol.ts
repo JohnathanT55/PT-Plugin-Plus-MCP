@@ -158,6 +158,8 @@ export function sanitizeAiRequest(request: AiAssistRequest): AiAssistRequest {
                 ...(typeof item.bonus === "number" && Number.isFinite(item.bonus) ? { bonus: item.bonus } : {}),
                 ...(typeof item.hnr === "number" && Number.isFinite(item.hnr) ? { hnr: item.hnr } : {}),
                 ...(typeof item.updatedAt === "string" ? { updatedAt: item.updatedAt.slice(0, 48) } : {}),
+                ...(typeof item.joinedAt === "string" ? { joinedAt: item.joinedAt.slice(0, 48) } : {}),
+                ...(item.joinedAtStatus === "available" || item.joinedAtStatus === "unavailable" ? { joinedAtStatus: item.joinedAtStatus } : {}),
                 ...(item.nextLevel && typeof item.nextLevel === "object" ? { nextLevel: item.nextLevel } : {}),
               })),
             }

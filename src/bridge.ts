@@ -172,13 +172,10 @@ export async function startBridge(config: BridgeConfig = {}): Promise<RunningBri
     const request = toolCallRequestSchema.parse({ ...input, requestId: input.requestId ?? createId() });
     const descriptor = session.capabilities.get(request.capability);
     if (!descriptor) throw new Error(`Capability is not registered: ${request.capability}`);
-    if (descriptor.confirmation === "required" && !request.confirmationToken) {
-      return Promise.resolve({
-        requestId: request.requestId,
-        ok: false,
-        error: { code: "confirmation_required", message: "This capability requires explicit confirmation" },
-      });
-    }
+    // Confirmation is owned by PTPP.  The first request intentionally reaches
+    // the extension without a token so it can create a concrete proposal and
+    // return a confirmationId/diff to the user.  The bridge only forwards a
+    // token when the caller supplied one; it never mints or guesses approval.
     if (session.pending.has(request.requestId)) throw new Error("Duplicate active requestId");
     if (session.pending.size >= MAX_SESSION_QUEUE) {
       return Promise.resolve({

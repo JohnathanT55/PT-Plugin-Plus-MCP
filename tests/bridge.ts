@@ -81,12 +81,28 @@ try {
   const requestResult = await (await queuedRequest).json();
   assert.deepEqual(requestResult, { requestId: "request-12345678", ok: true, result: { uploaded: 123, nextLevel: { ratio: 2 } } });
 
-  const actionWithoutConfirmation = await bridge.enqueueToolRequest(openPayload.sessionId, {
+  const actionWithoutConfirmation = bridge.enqueueToolRequest(openPayload.sessionId, {
+    requestId: "request-proposal1",
     capability: "site.sign_in",
     input: { siteId: "audiences" },
   });
-  assert.equal(actionWithoutConfirmation.ok, false);
-  assert.equal(actionWithoutConfirmation.error?.code, "confirmation_required");
+  const proposalPoll = await fetch(`http://${bridge.host}:${bridge.port}/v1/session/${openPayload.sessionId}/poll`, {
+    method: "POST",
+    headers: { Authorization: "Bearer test-token", "Content-Type": "application/json" },
+    body: JSON.stringify({ timeoutMs: 1_000 }),
+  });
+  const proposalRequest = (await proposalPoll.json()) as { request?: { requestId?: string; confirmationToken?: string } };
+  assert.equal(proposalRequest.request?.requestId, "request-proposal1");
+  assert.equal("confirmationToken" in (proposalRequest.request ?? {}), false, "first proposal has no token");
+  await fetch(`http://${bridge.host}:${bridge.port}/v1/session/${openPayload.sessionId}/response`, {
+    method: "POST",
+    headers: { Authorization: "Bearer test-token", "Content-Type": "application/json" },
+    body: JSON.stringify({ requestId: "request-proposal1", ok: true, result: { status: "confirmation_required", confirmationId: "proposal-1", summary: "Confirm this operation in PTPP" } }),
+  });
+  const proposalResult = await actionWithoutConfirmation;
+  assert.equal(proposalResult.ok, true);
+  assert.equal((proposalResult.result as { status?: string }).status, "confirmation_required");
+  assert.equal((proposalResult.result as { confirmationId?: string }).confirmationId, "proposal-1");
 
   const confirmedRequest = bridge.enqueueToolRequest(openPayload.sessionId, {
     requestId: "request-confirmed1",

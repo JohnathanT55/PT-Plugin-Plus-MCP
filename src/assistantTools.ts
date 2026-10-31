@@ -27,6 +27,10 @@ export function explicitSearchRequested(request: AiAssistRequest): boolean {
   return /搜索|搜一下|搜一搜|帮.{0,8}找|查找|\bsearch\b|\bfind\b/i.test(prompt);
 }
 
+function presentationRequested(request: AiAssistRequest): boolean {
+  return request.mode === "assist" && /(?:展示|显示|打开|看看|查看).{0,12}(?:搜索|检索|结果)|(?:show|open|display).{0,20}(?:search|results)/i.test(request.prompt ?? "");
+}
+
 const secretKey = /^(?:cookie|cookies|passkey|password|passwd|token|secret|authorization|api[_-]?key|username|userName|userId|email|address|url|baseUrl|host|hostname|headers)$/i;
 
 /** Preserve business fields, including all requirements/unmet values. */
@@ -42,7 +46,8 @@ export async function createAssistantTools(bridge: CapabilityBridge, request: Ai
   if (request.mode === "test" || request.mode === "search-draft") return undefined;
   const session = await selectSession(bridge, sessionId);
   const allowed = session.capabilities.filter((item) => item.confirmation === "none" &&
-    (READ_CAPABILITIES.has(item.id) || (item.id === "ptpp.search.start" && explicitSearchRequested(request))));
+    (READ_CAPABILITIES.has(item.id) || (item.id === "ptpp.search.start" && explicitSearchRequested(request)) ||
+      (item.id === "ptpp.search.present" && (explicitSearchRequested(request) || presentationRequested(request)))));
   const byName = new Map(allowed.map((item) => [item.id.replace(/\./g, "__"), item]));
   const resolveDescriptor = (name: string): CapabilityDescriptor | undefined => {
     const exact = byName.get(name);
@@ -56,7 +61,7 @@ export async function createAssistantTools(bridge: CapabilityBridge, request: Ai
   const pendingConfirmations: Array<Record<string, unknown>> = [];
   const run = async (descriptor: CapabilityDescriptor, input: unknown) => {
     let effectiveInput = input;
-    if ((descriptor.id === "ptpp.search.status" || descriptor.id === "ptpp.search.results") && input && typeof input === "object" && !Array.isArray(input) && !(input as any).jobId) {
+    if ((descriptor.id === "ptpp.search.status" || descriptor.id === "ptpp.search.results" || descriptor.id === "ptpp.search.present") && input && typeof input === "object" && !Array.isArray(input) && !(input as any).jobId) {
       const latest = latestSearchJobs.get(session.sessionId);
       if (latest) effectiveInput = { ...(input as Record<string, unknown>), jobId: latest };
     }
@@ -90,9 +95,9 @@ export async function createAssistantTools(bridge: CapabilityBridge, request: Ai
   return {
     tools: [...byName].map(([name, descriptor]) => ({ type: "function", function: {
       name,
-      description: descriptor.description + ((descriptor.id === "ptpp.search.status" || descriptor.id === "ptpp.search.results") ? " If jobId is omitted, use the latest search started in this conversation." : ""),
+      description: descriptor.description + ((descriptor.id === "ptpp.search.status" || descriptor.id === "ptpp.search.results" || descriptor.id === "ptpp.search.present") ? " If jobId is omitted, use the latest search started in this conversation." : ""),
       parameters: descriptor.inputSchema?.type
-        ? ((descriptor.id === "ptpp.search.status" || descriptor.id === "ptpp.search.results")
+        ? ((descriptor.id === "ptpp.search.status" || descriptor.id === "ptpp.search.results" || descriptor.id === "ptpp.search.present")
           ? { ...descriptor.inputSchema, required: [] }
           : descriptor.inputSchema)
         : { type: "object", properties: {} },

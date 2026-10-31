@@ -38,6 +38,28 @@ function failure(error: unknown) {
   return result({ ok: false, error: { code: "bridge_error", message } }, true);
 }
 
+async function callRegisteredCapability(
+  bridge: CapabilityBridge,
+  options: { sessionId?: string; capability: string; input: Record<string, unknown>; confirmationToken?: string; expectedKind?: "query" | "action" },
+) {
+  const session = await selectSession(bridge, options.sessionId);
+  const descriptor = session.capabilities.find((item) => item.id === options.capability);
+  if (!descriptor) return result({ ok: false, error: { code: "unsupported_capability", message: "Capability is not registered by the selected extension" } }, true);
+  if (options.expectedKind && descriptor.kind !== options.expectedKind) {
+    return result({ ok: false, error: { code: "unsupported_kind", message: `Capability is not a ${options.expectedKind} capability` } }, true);
+  }
+  // Confirmation is owned by PTPP.  A first action call without a token is
+  // deliberately forwarded so PTPP can create a concrete proposal and return
+  // its confirmationId/diff.  This adapter never creates or guesses a token;
+  // a caller-provided token is passed through for exact extension-side checks.
+  const response = await bridge.enqueueToolRequest(session.sessionId, {
+    capability: options.capability,
+    input: options.input,
+    confirmationToken: options.confirmationToken,
+  });
+  return result({ ...response, sessionId: session.sessionId }, !response.ok);
+}
+
 /** Stable tools discover the extension's live registry; no DOM/browser APIs. */
 export function createMcpServer(bridge: CapabilityBridge): McpServer {
   const server = new McpServer({ name: "pt-plugin-plus", version: "0.2.0" }, { maxToolInputElements: 5_000 });
@@ -70,17 +92,33 @@ export function createMcpServer(bridge: CapabilityBridge): McpServer {
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   }, async ({ sessionId, capability, input, confirmationToken }) => {
-    try {
-      const session = await selectSession(bridge, sessionId);
-      const descriptor = session.capabilities.find((item) => item.id === capability);
-      if (!descriptor) return result({ ok: false, error: { code: "unsupported_capability", message: "Capability is not registered by the selected extension" } }, true);
-      // Confirmation is owned by PTPP. The adapter never creates or guesses a
-      // token; it forwards the user-provided one to the extension, which must
-      // validate it against the exact pending proposal.
-      if (descriptor.confirmation === "required" && !confirmationToken) return result({ ok: false, error: { code: "confirmation_required", message: "Confirm this operation in PTPP and provide its one-time token" } }, true);
-      const response = await bridge.enqueueToolRequest(session.sessionId, { capability, input, confirmationToken });
-      return result({ ...response, sessionId: session.sessionId }, !response.ok);
-    } catch (error) { return failure(error); }
+    try { return await callRegisteredCapability(bridge, { sessionId, capability, input, confirmationToken }); }
+    catch (error) { return failure(error); }
+  });
+  server.registerTool("ptpp_query", {
+    description: "Execute one registered read-only PTPP query capability. Inspect ptpp_capabilities first; this tool excludes actions and writes.",
+    inputSchema: {
+      sessionId: z.string().max(100).optional(),
+      capability: z.string().regex(/^ptpp\.[a-z][a-z0-9_.-]{2,80}$/),
+      input: z.record(z.string(), z.unknown()).default({}),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ sessionId, capability, input }) => {
+    try { return await callRegisteredCapability(bridge, { sessionId, capability, input, expectedKind: "query" }); }
+    catch (error) { return failure(error); }
+  });
+  server.registerTool("ptpp_action", {
+    description: "Execute one registered PTPP action capability. Inspect ptpp_capabilities first; actions may require a one-time PTPP confirmation token.",
+    inputSchema: {
+      sessionId: z.string().max(100).optional(),
+      capability: z.string().regex(/^ptpp\.[a-z][a-z0-9_.-]{2,80}$/),
+      input: z.record(z.string(), z.unknown()).default({}),
+      confirmationToken: z.string().max(200).optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+  }, async ({ sessionId, capability, input, confirmationToken }) => {
+    try { return await callRegisteredCapability(bridge, { sessionId, capability, input, confirmationToken, expectedKind: "action" }); }
+    catch (error) { return failure(error); }
   });
   return server;
 }
