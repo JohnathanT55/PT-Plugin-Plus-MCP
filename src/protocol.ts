@@ -33,6 +33,7 @@ export const toolCallRequestSchema = z.object({
   requestId: z.string().regex(/^[A-Za-z0-9_-]{8,100}$/),
   capability: z.string().regex(/^[a-z][a-z0-9_.-]{2,80}$/),
   input: z.unknown().default({}),
+  confirmationId: z.string().max(200).optional(),
   confirmationToken: z.string().max(200).optional(),
 });
 export type ToolCallRequest = z.infer<typeof toolCallRequestSchema>;

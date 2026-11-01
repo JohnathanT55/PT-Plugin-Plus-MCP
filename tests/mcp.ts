@@ -10,11 +10,11 @@ const capability = {
 };
 const confirmationCapability = { ...capability, id: "ptpp.settings.apply_patch", kind: "action" as const, confirmation: "required" as const };
 const session: SessionSummary = { sessionId: "session-a", extensionId: "extension-a", extensionVersion: "2.1.0", browser: "chrome", openedAt: Date.now(), expiresAt: Date.now() + 60_000, capabilities: [capability, confirmationCapability] };
-const calls: Array<{ sessionId: string; capability: string; input: unknown; confirmationToken?: string }> = [];
+const calls: Array<{ sessionId: string; capability: string; input: unknown; confirmationId?: string; confirmationToken?: string }> = [];
 const bridge: CapabilityBridge = {
   listSessions: () => [session],
   enqueueToolRequest: async (sessionId, request) => {
-    calls.push({ sessionId, capability: request.capability, input: request.input, ...(request.confirmationToken ? { confirmationToken: request.confirmationToken } : {}) });
+    calls.push({ sessionId, capability: request.capability, input: request.input, ...(request.confirmationId ? { confirmationId: request.confirmationId } : {}), ...(request.confirmationToken ? { confirmationToken: request.confirmationToken } : {}) });
     if (request.capability === "ptpp.settings.apply_patch" && !request.confirmationToken) {
       return {
         requestId: request.requestId ?? "generated",
@@ -55,7 +55,8 @@ try {
   assert.equal(actionProposalText.includes("confirmation_required"), true, "ptpp_action also forwards the first proposal");
   assert.equal(calls.length, 4);
   assert.equal(calls[3].confirmationToken, undefined);
-  await client.callTool({ name: "ptpp_action", arguments: { capability: "ptpp.settings.apply_patch", input: { proposalId: "pending-1" }, confirmationToken: "user-approved-one-time-token" } });
+  await client.callTool({ name: "ptpp_action", arguments: { capability: "ptpp.settings.apply_patch", input: { proposalId: "pending-1" }, confirmationId: "pending-1", confirmationToken: "user-approved-one-time-token" } });
+  assert.equal(calls[4].confirmationId, "pending-1", "PTPP confirmationId is passed with the one-time token");
   assert.equal(calls[4].confirmationToken, "user-approved-one-time-token", "PTPP-owned token is passed through for extension-side validation");
   await assert.rejects(() => selectSession({ listSessions: () => [], enqueueToolRequest: bridge.enqueueToolRequest }, undefined), /No PTPP extension/);
   const multi = { listSessions: () => [session, { ...session, sessionId: "session-b" }], enqueueToolRequest: bridge.enqueueToolRequest };

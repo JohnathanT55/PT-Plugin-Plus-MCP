@@ -9,12 +9,12 @@
 
 ## PTPP 内部工具层
 
-- [ ] 在主插件中建立 capability registry。
-- [ ] 为页面定义稳定的 route、field、action 标识，不依赖 DOM 坐标。
+- [x] 在主插件中建立 capability registry。
+- [x] 为已注册业务定义稳定的 capability、输入和 action 标识，不依赖 DOM 坐标；未覆盖页面仍列在 PTPP 的覆盖清单中。
 - [ ] 让按钮和表单先调用共享 command/service，再由 MCP 调用同一 command/service。
-- [ ] 为站点、搜索、用户数据、签到、下载器、收藏、辅种、备份建立工具分组。
-- [ ] 提供 capability discovery：工具名称、参数、返回值、权限等级和当前可用状态。
-- [ ] 适配现有 `ProtocolMap`，不复制站点和下载器业务逻辑。
+- [x] 为站点、搜索、用户数据、签到、下载器、收藏、辅种、备份建立当前范围内的工具分组。
+- [x] 提供 capability discovery：工具名称、参数、返回值、权限等级和当前可用状态。
+- [x] 当前 capability 复用 PTPP 已有站点和下载器消息入口，不复制站点和下载器业务逻辑；完整 UI command/service 收口仍待后续批次。
 
 ## 内置 AI
 
@@ -47,7 +47,8 @@
 
 - [x] 默认关闭外部 MCP 桥接。
 - [x] Cookie、密码、API Key、WebDAV 凭据永不进入 AI 请求上下文或工具返回值。
-- [ ] 写操作使用 allowlist、确认令牌和审计日志。
+- [x] 已注册写操作使用 allowlist 和 PTPP 签发的一次性确认令牌；扩展侧 operation journal 保存脱敏结果摘要、去重关系及中断后的 `unknown` 状态。
+- [ ] 尚未把所有页面表单、恢复/清理、站点/下载器配置和内容页动作纳入同一审计/确认闭环。
 - [x] MCP adapter 不为确认级操作伪造确认令牌；此类操作要求 PTPP 拥有者确认流程。
-- [ ] 删除、恢复、批量下载等操作强制二次确认。
+- [x] 已注册的删除、批量下载提交和下载历史重试强制二次确认；备份恢复、清理及其余未注册写操作仍未开放。
 - [ ] 站点搜索和签到设置限流，并保留 `needs_manual` 状态。

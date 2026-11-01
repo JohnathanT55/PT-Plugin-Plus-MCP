@@ -40,7 +40,7 @@ function failure(error: unknown) {
 
 async function callRegisteredCapability(
   bridge: CapabilityBridge,
-  options: { sessionId?: string; capability: string; input: Record<string, unknown>; confirmationToken?: string; expectedKind?: "query" | "action" },
+  options: { sessionId?: string; capability: string; input: Record<string, unknown>; confirmationId?: string; confirmationToken?: string; expectedKind?: "query" | "action" },
 ) {
   const session = await selectSession(bridge, options.sessionId);
   const descriptor = session.capabilities.find((item) => item.id === options.capability);
@@ -55,6 +55,7 @@ async function callRegisteredCapability(
   const response = await bridge.enqueueToolRequest(session.sessionId, {
     capability: options.capability,
     input: options.input,
+    confirmationId: options.confirmationId,
     confirmationToken: options.confirmationToken,
   });
   return result({ ...response, sessionId: session.sessionId }, !response.ok);
@@ -88,11 +89,12 @@ export function createMcpServer(bridge: CapabilityBridge): McpServer {
       sessionId: z.string().max(100).optional(),
       capability: z.string().regex(/^[a-z][a-z0-9_.-]{2,80}$/),
       input: z.record(z.string(), z.unknown()).default({}),
+      confirmationId: z.string().max(200).optional(),
       confirmationToken: z.string().max(200).optional(),
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-  }, async ({ sessionId, capability, input, confirmationToken }) => {
-    try { return await callRegisteredCapability(bridge, { sessionId, capability, input, confirmationToken }); }
+  }, async ({ sessionId, capability, input, confirmationId, confirmationToken }) => {
+    try { return await callRegisteredCapability(bridge, { sessionId, capability, input, confirmationToken, confirmationId }); }
     catch (error) { return failure(error); }
   });
   server.registerTool("ptpp_query", {
@@ -113,11 +115,12 @@ export function createMcpServer(bridge: CapabilityBridge): McpServer {
       sessionId: z.string().max(100).optional(),
       capability: z.string().regex(/^ptpp\.[a-z][a-z0-9_.-]{2,80}$/),
       input: z.record(z.string(), z.unknown()).default({}),
+      confirmationId: z.string().max(200).optional(),
       confirmationToken: z.string().max(200).optional(),
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
-  }, async ({ sessionId, capability, input, confirmationToken }) => {
-    try { return await callRegisteredCapability(bridge, { sessionId, capability, input, confirmationToken, expectedKind: "action" }); }
+  }, async ({ sessionId, capability, input, confirmationId, confirmationToken }) => {
+    try { return await callRegisteredCapability(bridge, { sessionId, capability, input, confirmationToken, confirmationId, expectedKind: "action" }); }
     catch (error) { return failure(error); }
   });
   return server;
