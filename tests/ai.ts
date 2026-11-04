@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { normalizeEndpoint, requestAiAssistant } from "../src/ai.js";
 import { sanitizeAiRequest } from "../src/protocol.js";
-import { createAssistantTools, type AiTools } from "../src/assistantTools.js";
+import { createAssistantTools, protectToolResult, type AiTools } from "../src/assistantTools.js";
 
 assert.equal(normalizeEndpoint("https://example.test"), "https://example.test/v1/chat/completions");
 assert.equal(normalizeEndpoint("https://example.test/v1/"), "https://example.test/v1/chat/completions");
@@ -88,6 +88,21 @@ const continuedResponse = await requestAiAssistant(
 assert.equal(continuedResponse.text, "1. audiences\n2. azusa\n3. hdsky", "a length-limited answer is continued exactly once");
 assert.equal(continuationCalls, 2, "continuation is bounded to one extra request");
 
+let completeLengthCalls = 0;
+globalThis.fetch = async () => {
+  completeLengthCalls++;
+  return new Response(
+    JSON.stringify({ choices: [{ finish_reason: completeLengthCalls === 1 ? "length" : "stop", message: { content: completeLengthCalls === 1 ? "两站均已完成。" : "<COMPLETE>" } }] }),
+    { status: 200 },
+  );
+};
+const completeLengthResponse = await requestAiAssistant(
+  { mode: "assist", prompt: "总结结果" },
+  { endpoint: "https://example.test/v1", model: "model", apiKey: "secret", timeoutMs: 1_000 },
+);
+assert.equal(completeLengthResponse.text, "两站均已完成。", "a continuation completion marker is not shown to the user");
+assert.equal(completeLengthCalls, 2, "a length marker is continued even when the visible text ends with punctuation");
+
 const settingsDescriptor = {
   id: "ptpp.settings.propose_patch",
   version: 1,
@@ -100,6 +115,7 @@ const settingsDescriptor = {
   maxResultBytes: 65_536,
 };
 const settingsCalls: unknown[] = [];
+const applyDescriptor = { ...settingsDescriptor, id: "ptpp.settings.apply_patch", kind: "action" as const, confirmation: "required" as const };
 const settingsTools = await createAssistantTools(
   {
     listSessions: () => [
@@ -110,12 +126,12 @@ const settingsTools = await createAssistantTools(
         browser: "chrome",
         openedAt: Date.now(),
         expiresAt: Date.now() + 60_000,
-        capabilities: [settingsDescriptor],
+        capabilities: [settingsDescriptor, applyDescriptor],
       },
     ],
     enqueueToolRequest: async (_sessionId, input) => {
       settingsCalls.push(input);
-      return { requestId: "settings-request", ok: true, result: { status: "proposal", confirmationId: "confirmation-1", changes: [] } };
+      return { requestId: "settings-request", ok: true, result: { status: "proposal", confirmationId: "confirmation-1", executionCapability: applyDescriptor.id, executionInput: { changes: [{ path: "searchEntity.queueConcurrency", value: 7 }] }, changes: [{ path: "searchEntity.queueConcurrency", before: 8, after: 7 }] } };
     },
   },
   { mode: "assist", prompt: "调整搜索设置" },
@@ -125,6 +141,45 @@ assert(settingsTools);
 await settingsTools.execute("settings__propose_patch", { changes: [{ path: "searchEntity.queueConcurrency", value: 7 }] });
 assert.equal(settingsCalls.length, 1, "models may omit the ptpp namespace without bypassing the registry");
 assert.equal((settingsCalls[0] as any).capability, "ptpp.settings.propose_patch");
+assert.equal(settingsTools.pendingConfirmations?.[0].capability, "ptpp.settings.apply_patch", "the UI confirmation executes apply, never another proposal");
+assert.deepEqual(settingsTools.pendingConfirmations?.[0].input, { changes: [{ path: "searchEntity.queueConcurrency", value: 7 }] });
+assert.equal(settingsTools.tools.some((item) => item.function.name === "ptpp__settings__apply_patch"), false, "execution remains human-confirmed, not exposed to the model");
+assert.deepEqual(settingsTools.capabilityInventory, { callable: [settingsDescriptor.id], registeredOnly: [applyDescriptor.id] });
+await settingsTools.execute("ptpp__settings__apply_patch", { changes: [{ path: "searchEntity.queueConcurrency", value: 7 }] });
+assert.equal(settingsCalls.length, 1, "textual approval cannot bypass the UI confirmation");
+
+assert.deepEqual(protectToolResult({ statistics: { uploaded: 10, downloaded: 5, trueUploaded: 0, trueDownloaded: 0 }, nextLevel: { expectedAt: "2027-03-06", registrationStatus: "incomplete", intervalRemaining: "P125D" } }), {
+  statistics: { uploaded: 10, downloaded: 5 }, nextLevel: { expectedAt: "2027-03-06", registrationStatus: "incomplete", intervalRemaining: "P125D" },
+});
+const selectionContext = sanitizeAiRequest({ mode: "assist", prompt: "分析选中站点", context: { page: "my-data", pageInstanceId: "page-1", selection: { source: "selected", siteIds: ["site-a", "site-a"] } } });
+assert.deepEqual(selectionContext.context?.selection, { source: "selected", siteIds: ["site-a"] });
+assert.equal(selectionContext.context?.pageInstanceId, "page-1");
+assert.deepEqual(sanitizeAiRequest({ mode: "assist", prompt: "分析选中站点", context: { selection: { source: "none", siteIds: ["ignored"] } } }).context?.selection?.siteIds, []);
+
+const contextCalls: any[] = [];
+const pageBridge = {
+  listSessions: () => [{ sessionId: "page-session", extensionId: "extension", extensionVersion: "2.1.0", browser: "chrome", openedAt: 1, expiresAt: Date.now() + 60_000,
+    capabilities: ["ptpp.page_context", "ptpp.user_data.get", "ptpp.sites.list"].map((id) => ({ ...settingsDescriptor, id }))
+      .concat([{ ...settingsDescriptor, id: "ptpp.operations.list" }]),
+  }],
+  enqueueToolRequest: async (_id: string, input: any) => { contextCalls.push(input); return { requestId: "context-request", ok: true, result: { available: true, items: [] } }; },
+};
+const pageTools = (await createAssistantTools(pageBridge, selectionContext))!;
+await pageTools.execute("ptpp__page_context", {});
+assert.deepEqual(contextCalls[0].input, { page: "my-data", instanceId: "page-1" }, "live selection reads target the asking page instance");
+await pageTools.execute("ptpp__page_context", { page: "search" });
+assert.deepEqual(contextCalls[1].input, { page: "search" }, "an explicit different page never receives the original instance");
+await pageTools.fallbackContext();
+assert.deepEqual(contextCalls[2].input, { siteIds: ["site-a"], limit: 100 }, "fallback preserves selected-only scope");
+const noneTools = (await createAssistantTools(pageBridge, { mode: "assist", prompt: "只分析选中站点", context: { selection: { source: "none", siteIds: [] }, siteSummary: [{ site: "site-a" }] } }))!;
+assert.equal((await noneTools.fallbackContext() as any).status, "unavailable");
+assert.equal(contextCalls.length, 3, "missing selection does not silently query every site");
+assert(pageTools.capabilityInventory?.registeredOnly.includes("ptpp.operations.list"), "registered-only audit capabilities can be explained without claiming they are AI tools");
+
+let inventoryMessages: any[] = [];
+globalThis.fetch = async (_input, init) => { inventoryMessages = JSON.parse(String(init?.body)).messages; return new Response(JSON.stringify({ choices: [{ message: { content: "能力核对" } }] })); };
+await requestAiAssistant({ mode: "assist", prompt: "核对工具" }, { endpoint: "https://example.test/v1", model: "model", apiKey: "secret", timeoutMs: 1000 }, pageTools);
+assert(inventoryMessages.some((item) => item.role === "system" && item.content.includes('"registeredOnly":["ptpp.operations.list"]')));
 
 globalThis.fetch = originalFetch;
 

@@ -2,6 +2,7 @@ import type { AiAssistRequest, CapabilityDescriptor } from "./protocol.js";
 import { selectSession, type CapabilityBridge } from "./mcp.js";
 
 const READ_CAPABILITIES = new Set([
+  "ptpp.page_context",
   "ptpp.sites.list", "ptpp.user_data.get", "ptpp.downloaders.list", "ptpp.downloaders.status",
   "ptpp.search.status", "ptpp.search.results", "ptpp.signin.status", "ptpp.backups.list", "ptpp.backups.history",
   "ptpp.movies.search", "ptpp.movies.get", "ptpp.search.plans",
@@ -18,6 +19,7 @@ export interface AiTools {
   execute(name: string, input: unknown): Promise<unknown>;
   fallbackContext(): Promise<unknown>;
   pendingConfirmations?: Array<Record<string, unknown>>;
+  capabilityInventory?: { callable: string[]; registeredOnly: string[] };
 }
 
 export function explicitSearchRequested(request: AiAssistRequest): boolean {
@@ -31,7 +33,7 @@ function presentationRequested(request: AiAssistRequest): boolean {
   return request.mode === "assist" && /(?:展示|显示|打开|看看|查看).{0,12}(?:搜索|检索|结果)|(?:show|open|display).{0,20}(?:search|results)/i.test(request.prompt ?? "");
 }
 
-const secretKey = /^(?:cookie|cookies|passkey|password|passwd|token|secret|authorization|api[_-]?key|username|userName|userId|email|address|url|baseUrl|host|hostname|headers)$/i;
+const secretKey = /^(?:cookie|cookies|passkey|password|passwd|token|secret|authorization|api[_-]?key|username|userName|userId|email|address|url|baseUrl|host|hostname|headers|trueUploaded|trueDownloaded)$/i;
 
 /** Preserve business fields, including all requirements/unmet values. */
 export function protectToolResult(value: unknown, depth = 0): unknown {
@@ -61,6 +63,16 @@ export async function createAssistantTools(bridge: CapabilityBridge, request: Ai
   const pendingConfirmations: Array<Record<string, unknown>> = [];
   const run = async (descriptor: CapabilityDescriptor, input: unknown) => {
     let effectiveInput = input;
+    if (descriptor.id === "ptpp.page_context" && input && typeof input === "object" && !Array.isArray(input)) {
+      const value = input as Record<string, unknown>;
+      const context = request.context;
+      effectiveInput = {
+        ...value,
+        ...(!value.page && context?.page ? { page: context.page } : {}),
+        ...(!value.instanceId && context?.pageInstanceId && (!value.page || value.page === context.page)
+          ? { instanceId: context.pageInstanceId } : {}),
+      };
+    }
     if ((descriptor.id === "ptpp.search.status" || descriptor.id === "ptpp.search.results" || descriptor.id === "ptpp.search.present") && input && typeof input === "object" && !Array.isArray(input) && !(input as any).jobId) {
       const latest = latestSearchJobs.get(session.sessionId);
       if (latest) effectiveInput = { ...(input as Record<string, unknown>), jobId: latest };
@@ -72,6 +84,9 @@ export async function createAssistantTools(bridge: CapabilityBridge, request: Ai
     if (result.ok && result.result && typeof result.result === "object") {
       const proposal = result.result as Record<string, unknown>;
       if (proposal.status === "proposal" && typeof proposal.confirmationId === "string") {
+        const execution = session.capabilities.find((item) => item.id === proposal.executionCapability &&
+          item.id === "ptpp.settings.apply_patch" && item.confirmation === "required");
+        if (!execution) return { ok: false, error: { code: "confirmation_unavailable", message: "A preview was created, but the extension has no matching confirmation execution capability. No settings were saved." } };
         const proposalInput = input && typeof input === "object" && !Array.isArray(input)
           ? (Array.isArray((input as any).changes)
             ? { changes: (input as any).changes }
@@ -81,11 +96,12 @@ export async function createAssistantTools(bridge: CapabilityBridge, request: Ai
           : { changes: [] };
         pendingConfirmations.push({
           confirmationId: proposal.confirmationId,
-          capability: descriptor.id,
+          capability: execution.id,
           summary: typeof proposal.summary === "string" ? proposal.summary : "确认设置修改",
           diff: Array.isArray(proposal.changes) ? proposal.changes : [],
           expiresAt: typeof proposal.expiresAt === "number" ? proposal.expiresAt : undefined,
-          input: proposalInput,
+          input: proposal.executionInput && typeof proposal.executionInput === "object" && !Array.isArray(proposal.executionInput)
+            ? proposal.executionInput : proposalInput,
         });
         return protectToolResult(result);
       }
@@ -93,6 +109,10 @@ export async function createAssistantTools(bridge: CapabilityBridge, request: Ai
     return protectToolResult(result);
   };
   return {
+    capabilityInventory: {
+      callable: allowed.map((item) => item.id),
+      registeredOnly: session.capabilities.filter((item) => !allowed.some((allowedItem) => allowedItem.id === item.id)).map((item) => item.id),
+    },
     tools: [...byName].map(([name, descriptor]) => ({ type: "function", function: {
       name,
       description: descriptor.description + ((descriptor.id === "ptpp.search.status" || descriptor.id === "ptpp.search.results" || descriptor.id === "ptpp.search.present") ? " If jobId is omitted, use the latest search started in this conversation." : ""),
@@ -115,6 +135,11 @@ export async function createAssistantTools(bridge: CapabilityBridge, request: Ai
       const sites = allowed.find((item) => item.id === "ptpp.sites.list");
       const data = allowed.find((item) => item.id === "ptpp.user_data.get");
       if (!sites || !data) return { status: "unavailable", reason: "Site data tools are not registered" };
+      if (/选中|勾选|\bselected\b/i.test(request.prompt ?? "")) {
+        const selected = request.context?.selection;
+        if (selected?.source !== "selected" || !selected.siteIds.length) return { status: "unavailable", reason: "No explicit selected sites were provided. Do not substitute all sites." };
+        return { status: "read_only_fallback", scope: "selected", data: await run(data, { siteIds: selected.siteIds, limit: 100 }), searchExecuted: false };
+      }
       const listing = await run(sites, { limit: 100 }) as { ok: boolean; result?: { items?: Array<Record<string, unknown>> } };
       const scopeText = `${request.prompt ?? ""} ${(request.context?.siteSummary ?? []).map((item) => item.site).join(" ")}`.toLowerCase();
       const selected = (listing.result?.items ?? []).filter((item) => [item.siteId, item.name, item.siteName].some((value) => typeof value === "string" && value.length > 1 && scopeText.includes(value.toLowerCase()))).map((item) => item.siteId).filter((id): id is string => typeof id === "string");

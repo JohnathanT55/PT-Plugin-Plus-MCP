@@ -39,7 +39,7 @@ export function normalizeEndpoint(input: string): string {
 
 function modeInstruction(mode: AiAssistRequest["mode"]): string {
   return {
-    assist: "只返回简洁的文字建议。",
+    assist: "按用户要求调用本轮已提供的工具，再简洁说明真实结果；只读或仅校验请求不得生成修改草案。",
     test: "只回复 OK，不要补充其他内容。",
     "search-draft": "请给出可供用户确认的搜索条件草稿；不要执行搜索。优先使用 JSON 代码块，字段包括 keyword、year、season、resolution、codec、audio、subtitle、sort 和 notes；无法确定的字段省略。",
     "result-advice": "请分析当前结果并给出筛选或排序建议；不要执行下载、收藏或其他操作。引用结果时使用它们在输入中的顺序。",
@@ -77,6 +77,14 @@ function extractText(payload: unknown): ParsedTextResponse {
     model: typeof data.model === "string" ? data.model : undefined,
     finishReason,
   };
+}
+
+function isCompletionMarker(text: string): boolean {
+  return /^(?:```(?:text|markdown)?\s*)?<COMPLETE>\s*```$/i.test(text.trim());
+}
+
+function stripCompletionMarker(text: string): string {
+  return text.replace(/^\s*<COMPLETE>\s*/i, "").trim();
 }
 
 type ChatMessage = {
@@ -130,6 +138,8 @@ export async function requestAiAssistant(input: AiAssistRequest, config: AiRunti
   try {
     const messages: ChatMessage[] = [
       { role: "system", content: SYSTEM_PROMPT },
+      { role: "system", content: "区分尚未达标与数据缺失：注册时长尚未达标但有 expectedAt，表示可以计算达标日期，不是缺数据；预计注册时长达标日不是保证升级日，其他门槛也要满足。不讨论 trueUploaded/trueDownloaded，它们不属于本次等级分析。页面 context.selection.source 为 selected 时，siteIds 才是明确选中项；none 表示没有选中，不能把全部站点摘要冒充选中。页面快照可以作为本次提问的选择依据，与是否有读取工具是两回事；需要实时确认时使用 page_context 并保留指定页面实例。搜索已展示后不要再说“如需打开请告诉我”；用户仅要求分析当前结果时也不要附加无关操作邀约。设置草案只能通过浮窗确认应用，文字“确认”不是已保存；用户应能关闭/重新打开浮窗查看未过期草案，只有取消才撤销草案。汇总记录时分类数量须与总数一致，无法精确统计就说明而非猜测。" },
+      ...(tools?.capabilityInventory ? [{ role: "system", content: `当前会话能力清单来自已连接扩展的实时注册表。callable 是本轮实际可调用工具；registeredOnly 只是底层已注册，当前 AI 不可调用，不能声称执行过。未出现的能力只能说无法确认。用户询问能力时据此逐项区分，不把没有 AI 工具误说成底层未实现：${JSON.stringify(tools.capabilityInventory)}` }] : []),
       ...(request.mode === "test" ? [] : clampAiHistory(request.history)),
       { role: "user", content: buildUserMessage(request) },
     ];
@@ -171,9 +181,16 @@ export async function requestAiAssistant(input: AiAssistRequest, config: AiRunti
     const calls = readToolCalls(payload);
     if (!calls.length) {
       const parsed = extractText(payload);
-      assembledText = assembledText ? `${assembledText}\n${parsed.text}` : parsed.text;
+      if (continuationCount > 0 && isCompletionMarker(parsed.text)) {
+        return { text: assembledText.trim(), model: responseModel, ...(tools?.pendingConfirmations?.length ? { pendingConfirmations: tools.pendingConfirmations.slice(0, 5) } : {}) };
+      }
+      const visibleText = continuationCount > 0 ? stripCompletionMarker(parsed.text) : parsed.text;
+      if (visibleText) assembledText = assembledText ? `${assembledText}\n${visibleText}` : visibleText;
       responseModel ??= parsed.model;
-      if (parsed.finishReason === "length" && continuationCount < MAX_OUTPUT_CONTINUATIONS) {
+      if (
+        parsed.finishReason === "length" &&
+        continuationCount < MAX_OUTPUT_CONTINUATIONS
+      ) {
         continuationCount++;
         // Preserve the partial answer in the conversation and ask for only the
         // missing tail. The bounded counter prevents an uncooperative provider
@@ -181,11 +198,14 @@ export async function requestAiAssistant(input: AiAssistRequest, config: AiRunti
         messages.push({ role: "assistant", content: parsed.text });
         messages.push({
           role: "user",
-          content: "上一条回答达到输出上限而中断。请只从中断处继续，不要重复已经输出的内容，并保持原有 Markdown 格式。",
+          content: "上一条回答达到输出上限而中断。请只从中断处继续，不要重复已经输出的内容，并保持原有 Markdown 格式；如果上一条已经自然结束，请只回复 <COMPLETE>。",
         });
         continue;
       }
-      const truncatedNotice = parsed.finishReason === "length" ? "\n\n> 回答达到输出上限，已停止继续生成。" : "";
+      const truncatedNotice =
+        parsed.finishReason === "length"
+          ? "\n\n> 回答达到输出上限，已停止继续生成。"
+          : "";
       return { text: `${assembledText.trim()}${truncatedNotice}`.slice(0, 12_000), model: responseModel, ...(tools?.pendingConfirmations?.length ? { pendingConfirmations: tools.pendingConfirmations.slice(0, 5) } : {}) };
     }
     if (!offerTools) throw new Error("AI 响应超出工具调用轮数；操作结果未完成，请查看相关页面状态");

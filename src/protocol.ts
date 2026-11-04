@@ -56,6 +56,9 @@ export type AiAssistMode = z.infer<typeof aiAssistModeSchema>;
 
 const aiContextSchema = z
   .object({
+    page: z.enum(["my-data", "search"]).optional(),
+    pageInstanceId: z.string().max(160).optional(),
+    selection: z.object({ source: z.enum(["selected", "none"]), siteIds: z.array(z.string().max(80)).max(200) }).optional(),
     searchKey: z.string().max(240).optional(),
     torrentTitles: z.array(z.string().max(180)).max(20).optional(),
     torrentResults: z.array(z.record(z.string(), z.unknown())).max(30).optional(),
@@ -128,6 +131,12 @@ export function sanitizeAiRequest(request: AiAssistRequest): AiAssistRequest {
   const parsed = aiAssistRequestSchema.parse(request);
   const context = parsed.context
     ? {
+        ...(parsed.context.page ? { page: parsed.context.page } : {}),
+        ...(parsed.context.pageInstanceId ? { pageInstanceId: parsed.context.pageInstanceId } : {}),
+        ...(parsed.context.selection ? { selection: {
+          source: parsed.context.selection.source,
+          siteIds: parsed.context.selection.source === "selected" ? [...new Set(parsed.context.selection.siteIds)] : [],
+        } } : {}),
         ...(parsed.context.searchKey ? { searchKey: parsed.context.searchKey.trim().slice(0, 240) } : {}),
         ...(parsed.context.torrentTitles?.length ? { torrentTitles: parsed.context.torrentTitles.map((value) => value.trim().slice(0, 180)).filter(Boolean).slice(0, 20) } : {}),
         ...(parsed.context.torrentResults?.length
@@ -188,6 +197,9 @@ export function sanitizeAiRequest(request: AiAssistRequest): AiAssistRequest {
     ...sanitized,
     context: sanitized.context
       ? {
+          page: sanitized.context.page,
+          pageInstanceId: sanitized.context.pageInstanceId,
+          selection: sanitized.context.selection,
           searchKey: sanitized.context.searchKey,
           torrentTitles: sanitized.context.torrentTitles?.slice(0, 8),
           torrentResults: sanitized.context.torrentResults?.slice(0, 12),

@@ -25,6 +25,7 @@
 - [x] 搜索、用户数据分析和解释类操作按用户意图开放；搜索启动仅在用户明确要求时提供。
 - [x] 仅读工具进入 AI allowlist；刷新、签到执行、推送、删除、恢复和配置修改不向 AI 暴露。
 - [x] action/ptpp_call 的确认级操作首调会转发到 PTPP，由扩展生成 confirmationId/差异；后续调用只原样转发用户提供的一次性令牌，MCP 不伪造审批。
+- [x] 对服务端 `finish_reason=length` 执行一次有界续写，并过滤内部 `<COMPLETE>` 标记；不会因句末标点跳过可能缺失的回答尾部。
 
 ## 外部 MCP 连接
 
@@ -42,6 +43,7 @@
 - [x] 标准 `ptpp_query`、`ptpp_action` 与兼容 `ptpp_call` 复用 PTPP capability registry，并按 descriptor.kind 做路由。
 - [x] 多会话必须显式选择 session；只读投影和分页能力通过 PTPP bridge 返回，敏感 URL、磁链、路径和凭据不跨边界。
 - [x] confirmation-required action 的首次 proposal 可到达 PTPP 生成 confirmationId；MCP 仅透传后续用户令牌。
+- [x] PTPP 搜索运行态使用搜索代际保护，外部 MCP 的异步页面交接不会让旧搜索覆盖新搜索结果。
 
 ## 安全和隐私
 
